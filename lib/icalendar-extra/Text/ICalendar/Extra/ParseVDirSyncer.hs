@@ -35,7 +35,7 @@ import Data.Time (
  )
 import GHC.Generics (Generic)
 import System.Directory (doesFileExist, getModificationTime, listDirectory)
-import System.FilePath ((</>))
+import System.FilePath (takeExtension, (</>))
 import Text.ICalendar
 import Text.ICalendar.Extra.Types (
   Event (..),
@@ -168,8 +168,8 @@ instance A.ToJSON CalendarContent
 -- 可能失败的地方：
 --   解析 json 过程
 --   解析 ics 过程
-parseCalendarsUsingCache :: FilePath -> FilePath -> ExceptT String (WriterT [VisualizeEventWarning] IO) [CalendarContent]
-parseCalendarsUsingCache cacheJSON calendarDir = do
+parseCalendarsUsingCache :: FilePath -> [FilePath] -> ExceptT String (WriterT [VisualizeEventWarning] IO) [CalendarContent]
+parseCalendarsUsingCache cacheJSON calendarDirs = do
   exist <- l2 $ doesFileExist cacheJSON
   unless exist $ l2 $ writeFile cacheJSON "[]"
   cacheContent <- l2 $ BL.readFile cacheJSON
@@ -178,16 +178,18 @@ parseCalendarsUsingCache cacheJSON calendarDir = do
   eventCacheA <- case maybeEventCacheA of
     Just x -> return x
     Nothing -> throwE "fail to parse json cache"
-  icsFileB <- l2 $ listDirectory calendarDir
-  icsFileWithModificationTimeB <- l2 $ mapM (\x -> getModificationTime (calendarDir </> x) >>= (\y -> return (x, y))) icsFileB
+  -- (fullPath, mtime) for every .ics across all calendar dirs; the full path
+  -- is used as the cache key so files with the same name in different dirs
+  -- don't collide.
+  icsFileWithModificationTimeB <- l2 $ concat <$> mapM collectIcs calendarDirs
   let
     contentInFileMap = M.fromList icsFileWithModificationTimeB
     contentInCacheMap = M.fromList (map (\x -> (x.filename, (x.cacheTime, x.content))) eventCacheA)
     contentInFileWithoutCache = M.toList $ M.difference contentInFileMap contentInCacheMap
     contentInBothFileAndCache = M.toList $ M.intersectionWith (\fileTime (cacheTime, event) -> (fileTime, cacheTime, event)) contentInFileMap contentInCacheMap
     parseContent :: (FilePath, UTCTime) -> ExceptT String (WriterT [VisualizeEventWarning] IO) ContentCache
-    parseContent = \(filename, fileTime) -> do
-      cnt <- l2 $ BL.readFile (calendarDir </> filename)
+    parseContent = \(filePath, fileTime) -> do
+      cnt <- l2 $ BL.readFile filePath
       let
         contentEither = parseVDirSyncerICSFile cnt
       case contentEither of
@@ -196,26 +198,26 @@ parseCalendarsUsingCache cacheJSON calendarDir = do
             ( ContentCache
                 { cacheTime = fileTime
                 , content = content
-                , filename = filename
+                , filename = filePath
                 }
             )
-        Left err -> throwE ("parse " <> (calendarDir </> filename) <> " fail with: " <> err)
+        Left err -> throwE ("parse " <> filePath <> " fail with: " <> err)
   contentNotInCacheC <- mapM parseContent contentInFileWithoutCache
   contentInBothFileAndCacheD <-
     mapM
-      ( \(filename, (fileTime, cacheTime, content)) ->
+      ( \(filePath, (fileTime, cacheTime, content)) ->
           if fileTime == cacheTime
             then
               return
                 ( ContentCache
                     { cacheTime = cacheTime
                     , content = content
-                    , filename = filename
+                    , filename = filePath
                     }
                 )
             else do
-              lift $ when (fileTime < cacheTime) $ tell [FileTimeEarlierThanCacheTime filename]
-              parseContent (filename, fileTime)
+              lift $ when (fileTime < cacheTime) $ tell [FileTimeEarlierThanCacheTime filePath]
+              parseContent (filePath, fileTime)
       )
       contentInBothFileAndCache
   let
@@ -225,3 +227,9 @@ parseCalendarsUsingCache cacheJSON calendarDir = do
   return finalEvents
  where
   l2 = lift . lift
+  collectIcs :: FilePath -> IO [(FilePath, UTCTime)]
+  collectIcs dir = do
+    names <- listDirectory dir
+    let
+      icss = filter ((== ".ics") . takeExtension) names
+    mapM (\name -> getModificationTime (dir </> name) >>= \t -> return (dir </> name, t)) icss

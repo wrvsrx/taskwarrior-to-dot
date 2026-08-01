@@ -49,7 +49,7 @@ import Text.ICalendar.Extra.Types (
 import Text.Pretty.Simple (pShow)
 
 data ConfigFromFile = ConfigFromFile
-  { calendarDir :: Maybe FilePath
+  { calendarDirs :: Maybe [FilePath]
   , cacheJSONPath :: Maybe FilePath
   , classifyConfig :: ClassifyConfig
   }
@@ -59,7 +59,7 @@ instance A.FromJSON ConfigFromFile
 instance A.ToJSON ConfigFromFile
 
 data CalendarSummaryOption = CalendarSummaryOption
-  { calendarDir :: FilePath
+  { calendarDirs :: [FilePath]
   , timeRange :: (LocalTime, LocalTime)
   , outputPng :: FilePath
   , cacheJSONPath :: FilePath
@@ -71,7 +71,7 @@ parseAndSummaryEvents timeZone options = do
   let
     cacheDir = takeDirectory options.cacheJSONPath
   l2 $ createDirectoryIfMissing True cacheDir
-  calendarContents <- parseCalendarsUsingCache options.cacheJSONPath options.calendarDir
+  calendarContents <- parseCalendarsUsingCache options.cacheJSONPath options.calendarDirs
   let
     events =
       mapMaybe

@@ -127,7 +127,7 @@ maybeFilterParser :: Parser (Maybe T.Text)
 maybeFilterParser = optional filterParser
 
 data VisualizeEventOption = CliOption
-  { calendarDir :: Maybe FilePath
+  { calendarDirs :: [FilePath]
   , timeRange :: Maybe TimeRange
   , outputPng :: FilePath
   , cacheJSONPath :: Maybe FilePath
@@ -137,12 +137,12 @@ data VisualizeEventOption = CliOption
 
 calendarVisualizationParser :: Parser VisualizeEventOption
 calendarVisualizationParser = do
-  calendarDir <-
-    optional $
+  calendarDirs <-
+    many $
       strOption
         ( long "calendar-dir"
             <> short 'c'
-            <> help "calendar directory"
+            <> help "calendar directory (repeatable)"
         )
   timeRange <- optional timeRangeParser
   outputPng :: FilePath <-
@@ -168,7 +168,7 @@ calendarVisualizationParser = do
         )
   pure
     CliOption
-      { calendarDir = calendarDir
+      { calendarDirs = calendarDirs
       , timeRange = timeRange
       , outputPng = outputPng
       , cacheJSONPath = cacheJSONPath
@@ -198,11 +198,12 @@ parseVisualizeEventCliOption cliOption = do
     configFile = fromMaybe defaultConfigFile cliOption.configPath
   config :: ConfigFromFile <- A.eitherDecodeFileStrict configFile <&> either error id
   let
-    calendarDir = case cliOption.calendarDir of
-      Just x -> x
-      Nothing -> case config.calendarDir of
-        Just x -> x
-        Nothing -> error "calendarDir is not specified either in command line or in config file"
+    calendarDirs =
+      if not (null cliOption.calendarDirs)
+        then cliOption.calendarDirs
+        else case config.calendarDirs of
+          Just x -> x
+          Nothing -> error "calendarDirs is not specified either in command line or in config file"
   timeRange <- do
     case cliOption.timeRange of
       Just (TimeRangeDay day) -> do
@@ -221,7 +222,7 @@ parseVisualizeEventCliOption cliOption = do
           )
   return
     CalendarSummaryOption
-      { calendarDir = calendarDir
+      { calendarDirs = calendarDirs
       , timeRange = timeRange
       , outputPng = cliOption.outputPng
       , cacheJSONPath = fromMaybe defaultCacheFile $ cliOption.cacheJSONPath <|> config.cacheJSONPath
